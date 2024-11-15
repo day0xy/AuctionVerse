@@ -3,7 +3,7 @@ pragma solidity 0.8.24;
 
 import "./AuctionVerse.sol";
 
-contract AuctionVerse {
+contract AuctionVerseFactory {
     address[] public allAuctions;
     mapping(address => address[]) public auctionsBySeller;
 
@@ -12,7 +12,7 @@ contract AuctionVerse {
     function createAuction(
         address fractionalizedRealEstateTokenAddress
     ) external returns (address) {
-        AuctionVerse newAuction = new AuctionVerse(
+        EnglishAuction newAuction = new EnglishAuction(
             fractionalizedRealEstateTokenAddress
         );
         allAuctions.push(address(newAuction));

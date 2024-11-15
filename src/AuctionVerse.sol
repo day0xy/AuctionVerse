@@ -7,17 +7,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 contract AuctionVerse is IERC1155Receiver, ReentrancyGuard {
-    error AuctionVerse_OnlySellerCanCall();
-    error AuctionVerse_AuctionAlreadyStarted();
-    error OnlyRealEstateTokenSupported();
-    error AuctionVerse_NoAuctionsInProgress();
-    error AuctionVerse_AuctionEnded();
-    error AuctionVerse_BidNotHighEnough();
-    error AuctionVerse_CannotWithdrawHighestBid();
-    error AuctionVerse_TooEarlyToEnd();
-    error FailedToWithdrawBid(address bidder, uint256 amount);
-    error NothingToWithdraw();
-    error FailedToSendEth(address recipient, uint256 amount);
+
 
     address internal immutable i_seller;
     address internal immutable i_fractionalizedRealEstateToken;
