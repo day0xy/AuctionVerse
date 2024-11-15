@@ -6,7 +6,6 @@ import "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
 contract AToken is ERC1155 {
     uint256 public _currentID;
 
-
     constructor() ERC1155("https://api.example.com/metadata/{id}.json") {
         _currentID = 0;
     }
