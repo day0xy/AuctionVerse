@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-interface IStablecoin {
+interface IUSDA {
     function mint(uint256 amount) external;
     function redeem(uint256 amount) external;
     function balanceOf(address account) external view returns (uint256);
