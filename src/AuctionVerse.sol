@@ -11,22 +11,22 @@ contract AuctionVerse is ReentrancyGuard, Errors {
     address internal immutable seller;
     address internal immutable atoken;
 
-    bool started;
-
-    uint256 startTimestamp; //起拍时间
-    uint48 endTimestamp; //结束时间
     struct AuctionDetails {
         uint256 startedBid; //起拍价
-        uint256 bidDeposit; //起拍价押金为起拍价的3%
         uint256 Increment; //最小加价幅度
         uint256 incrementDuration; //加价幅度持续时间
-        uint256 duration; //持续时间，可以用block.timestamp-
-        address highestBidder; //最高出价者
-        uint256 highestBid; //最高出价
         uint256 reservePrice; //保留价，如果最高价格没有达到保留价，卖家可以选择不卖
         uint256 tokenIdOnAuction;
         uint256 fractionalizedAmountOnAuction;
     }
+
+    bool started;
+    uint256 startTimestamp; //起拍时间
+    uint48 endTimestamp; //结束时间
+    uint256 duration; //持续时间，可以用block.timestamp-
+    uint256 highestBid; //最高出价
+    address highestBidder; //最高出价者
+    uint256 bidDeposit; //起拍价押金为起拍价的3%
 
     AuctionDetails internal auctionDetails;
 
@@ -46,9 +46,10 @@ contract AuctionVerse is ReentrancyGuard, Errors {
         uint256 indexed winningBid
     );
 
-    constructor(address atokenAddress) {
+    constructor(address atokenAddress, AuctionDetails memory auctionDetail) {
         seller = msg.sender;
         atoken = atokenAddress;
+        auctionDetails = auctionDetail;
     }
 
     function startAuction(
