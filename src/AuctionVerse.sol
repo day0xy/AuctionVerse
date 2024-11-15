@@ -1,31 +1,35 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
-import {IERC1155Receiver, IERC165} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import "./utils/Errors.sol";
 
-contract AuctionVerse is IERC1155Receiver, ReentrancyGuard {
+contract AuctionVerse is ReentrancyGuard {
+    address internal immutable seller;
+    address internal immutable atoken;
 
+    bool internal started;
+    uint256 internal startTimestamp; //起拍时间
+    uint48 internal endTimestamp; //结束时间
+    uint256 internal startedBid; //起拍价
+    uint256 internal bidDeposit; //起拍价押金
+    uint256 internal minimumIncrement; //最小加价幅度
+    uint256 internal incrementDuration; //加价幅度持续时间
+    uint256 internal duration; //持续时间，可以用block.timestamp-
+    address internal highestBidder; //最高出价者
+    uint256 internal highestBid; //最高出价
+    uint256 internal reservePrice; //保留价，如果最高价格没有达到保留价，卖家可以选择不卖
+    uint256 internal tokenIdOnAuction;
 
-    address internal immutable i_seller;
-    address internal immutable i_fractionalizedRealEstateToken;
-
-    bool internal s_started;
-    uint48 internal s_endTimestamp;
-    address internal s_highestBidder;
-    uint256 internal s_highestBid;
-    uint256 internal s_tokenIdOnAuction;
-    uint256 internal s_fractionalizedAmountOnAuction;
-
-    mapping(address bidder => uint256 totalBiddedEth) internal s_bids;
+    mapping(address bidder => uint256 totalBiddedEth) internal bids;
 
     event AuctionStarted(
         uint256 indexed tokenId,
         uint256 indexed amount,
         uint48 indexed endTimestamp
     );
+
     event Bid(address indexed bidder, uint256 indexed amount);
     event AuctionEnded(
         uint256 indexed tokenId,
@@ -34,9 +38,9 @@ contract AuctionVerse is IERC1155Receiver, ReentrancyGuard {
         uint256 indexed winningBid
     );
 
-    constructor(address fractionalizedRealEstateTokenAddress) {
-        i_seller = msg.sender;
-        i_fractionalizedRealEstateToken = fractionalizedRealEstateTokenAddress;
+    constructor(address atokenAddress) {
+        seller = msg.sender;
+        Atoken = atokenAddress;
     }
 
     function startAuction(
@@ -45,10 +49,10 @@ contract AuctionVerse is IERC1155Receiver, ReentrancyGuard {
         bytes calldata data,
         uint256 startingBid
     ) external nonReentrant {
-        if (s_started) revert AuctionVerse_AuctionAlreadyStarted();
-        if (msg.sender != i_seller) revert AuctionVerse_OnlySellerCanCall();
+        if (started) revert AuctionVerse_AuctionAlreadyStarted();
+        if (msg.sender != seller) revert AuctionVerse_OnlySellerCanCall();
 
-        IERC1155(i_fractionalizedRealEstateToken).safeTransferFrom(
+        IERC1155(atoken).safeTransferFrom(
             i_seller,
             address(this),
             tokenId,
