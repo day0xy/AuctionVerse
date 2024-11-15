@@ -6,6 +6,6 @@ import {IERC1155Receiver, IERC165} from "@openzeppelin/contracts/token/ERC1155/I
 import "./Factory.sol";
 
 
-contact AuctionVerseRouter{
+contact AuctionRouter {
 
 }

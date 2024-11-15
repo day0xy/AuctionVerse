@@ -5,6 +5,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {IERC1155Receiver, IERC165} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {Errors} from "./utils/Errors.sol";
 
 contract AuctionVerse is ReentrancyGuard, Errors {
@@ -12,6 +13,8 @@ contract AuctionVerse is ReentrancyGuard, Errors {
     address internal immutable atoken;
 
     struct AuctionDetails {
+        uint256 tokenId; //拍卖的tokenId
+        uint256 amount; //拍卖的token数量   
         uint256 startedBid; //起拍价
         uint256 Increment; //最小加价幅度
         uint256 incrementDuration; //加价幅度持续时间
@@ -52,36 +55,32 @@ contract AuctionVerse is ReentrancyGuard, Errors {
         auctionDetails = auctionDetail;
     }
 
+    //开始拍卖合约
     function startAuction(
-        uint256 tokenId,
-        uint256 amount,
-        bytes calldata data,
-        uint256 startingBid
+        bytes calldata data
     ) external nonReentrant {
         if (started) revert AuctionVerse_AuctionAlreadyStarted();
         if (msg.sender != seller) revert AuctionVerse_OnlySellerCanCall();
 
+        //将拍卖的token从卖家转移到拍卖合约
         IERC1155(atoken).safeTransferFrom(
             seller,
             address(this),
-            tokenId,
-            amount,
+            auctionDetails.tokenId,
+            auctionDetails.amount,
             data
         );
 
         started = true;
         endTimestamp = SafeCast.toUint48(block.timestamp + 7 days);
-        tokenIdOnAuction = tokenId;
-        fractionalizedAmountOnAuction = amount;
-        highestBidder = msg.sender;
-        highestBid = startingBid;
 
-        emit AuctionStarted(tokenId, amount, endTimestamp);
+        emit AuctionStarted(
+            auctionDetails.tokenId,
+            auctionDetails.amount,
+            endTimestamp
+        );
     }
 
-    function getTokenIdOnAuction() external view returns (uint256) {
-        return tokenIdOnAuction;
-    }
 
     function bid() external payable nonReentrant {
         if (!started) revert AuctionVerse_NoAuctionsInProgress();

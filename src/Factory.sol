@@ -6,13 +6,20 @@ import {IERC1155Receiver, IERC165} from "@openzeppelin/contracts/token/ERC1155/I
 import "./AuctionVerse.sol";
 
 contract AuctionVerseFactory {
+    address constant atoken;
+
+    //atoken地址部署一次就行了
+    constructor(address _atoken) {
+        atoken = _atoken;
+    }
+
     address[] public allAuctions;
     mapping(address => address[]) public auctionsBySeller;
 
     event AuctionCreated(address indexed seller, address auctionAddress);
 
-    function createAuction(address Atoken) external returns (address) {
-        AuctionVerse newAuction = new AuctionVerse(IERC1155(Atoken));
+    function createAuction() external returns (address) {
+        AuctionVerse newAuction = new AuctionVerse(IERC1155(atoken));
         allAuctions.push(address(newAuction));
         auctionsBySeller[msg.sender].push(address(newAuction));
 
