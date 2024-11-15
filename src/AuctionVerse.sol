@@ -168,4 +168,9 @@ contract AuctionVerse is ReentrancyGuard, Errors {
             interfaceId == type(IERC1155Receiver).interfaceId ||
             interfaceId == type(IERC165).interfaceId;
     }
+
+
+    function getSeller() external view returns (address) {
+        return seller;
+    }
 }
