@@ -34,7 +34,9 @@ contract AuctionVerse is ReentrancyGuard, Errors {
     AuctionDetails internal auctionDetails;
 
     //某个人当前的出价
-    mapping(address bidder => uint256 lastestBiddedAmount) public bids;
+    mapping(address bidder => uint256 latestBiddedAmount) public bids;
+    //记录竞拍者
+    address[] public bidders;
 
     event AuctionStarted(
         uint256 indexed tokenId,
@@ -56,12 +58,12 @@ contract AuctionVerse is ReentrancyGuard, Errors {
         auctionDetails = auctionDetail;
     }
 
-    //开始拍卖合约
+    //开始拍卖
     function startAuction(bytes calldata data) external nonReentrant {
         if (started) revert AuctionVerse_AuctionAlreadyStarted();
         if (msg.sender != seller) revert AuctionVerse_OnlySellerCanCall();
 
-        //将铸造的新的Atoken从卖家转移到拍卖合约地址
+        //将铸的新的Atoken从卖家转移到拍卖合约地址
         IERC1155(atoken).safeTransferFrom(
             seller,
             address(this),
@@ -83,7 +85,14 @@ contract AuctionVerse is ReentrancyGuard, Errors {
         );
     }
 
+    //用USDA出价
+    //前端这里要限制amount出价的幅度，并且做余额检查
     function bid(uint256 amount) external nonReentrant {
+        require(amount > 0, "Bid amount must be greater than 0");
+        require(
+            IUSDA(usda).balanceOf(msg.sender) >= amount,
+            "Insufficient balance"
+        );
         if (!started) revert AuctionVerse_NoAuctionsInProgress();
         if (block.timestamp >= endTimestamp) revert AuctionVerse_AuctionEnded();
 
@@ -93,17 +102,14 @@ contract AuctionVerse is ReentrancyGuard, Errors {
         // 检查竞标金额是否满足最小加价幅度
         if (amount < highestBid + auctionDetails.Increment)
             revert AuctionVerse_BidIncrementTooLow();
-        
-        // 将USDA从竞标者转移到拍卖合约
-        bool success = IUSDA(usda).transferFrom(
-            msg.sender,
-            address(this),
-            amount
-        );
-        if (!success) revert AuctionVerse_TransferFailed();
 
+        // 如果竞标者已经存在于bidders中，不再重复添加
+        if (bids[msg.sender] == 0) {
+            bidders.push(msg.sender);
+        }
+
+        // 更新竞拍者出价
         bids[msg.sender] = amount;
-
         // 更新最高竞标和竞标者
         highestBid = amount;
         highestBidder = msg.sender;
@@ -119,6 +125,18 @@ contract AuctionVerse is ReentrancyGuard, Errors {
 
         require(highestBidder != address(0), "Highest bidder not found");
         require(highestBidder != seller, "Seller cannot be the highest bidder");
+
+        // 检查合约是否持有足够的token
+        require(
+            IERC1155(atoken).balanceOf(address(this), auctionDetails.tokenId) >=
+                auctionDetails.amount,
+            "Insufficient token balance in contract"
+        );
+
+        // 把最高出价者的usda token转移给卖家
+        bool success = IUSDA(usda).transfer(seller, highestBid);
+        if (!success) revert AuctionVerse_TransferFailed();
+
         // 将拍卖的token转移给最高出价者
         IERC1155(atoken).safeTransferFrom(
             address(this),
@@ -129,7 +147,8 @@ contract AuctionVerse is ReentrancyGuard, Errors {
         );
 
         // 将最高出价转移给卖家
-        IUSDA(usda).transferFrom(address(this), msg.sender, amount);
+        success = IUSDA(usda).transfer(seller, highestBid);
+        if (!success) revert AuctionVerse_TransferFailed();
 
         emit AuctionEnded(
             auctionDetails.tokenId,
@@ -189,6 +208,8 @@ contract AuctionVerse is ReentrancyGuard, Errors {
             interfaceId == type(IERC1155Receiver).interfaceId ||
             interfaceId == type(IERC165).interfaceId;
     }
+
+    function stake() internal {}
 
     function getSeller() external view returns (address) {
         return seller;
