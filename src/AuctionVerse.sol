@@ -8,9 +8,11 @@ import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {Errors} from "./utils/Errors.sol";
 import {IUSDA} from "./interfaces/IUSDA.sol";
-import {AutomationCompatibleInterface} from "@chainlink/contracts/src/v0.8/interfaces/AutomationCompatibleInterface.sol";
 
-contract AuctionVerse is ReentrancyGuard, Errors, AutomationCompatibleInterface {
+contract AuctionVerse is
+    ReentrancyGuard,
+    Errors
+{
     address public immutable seller;
     address public immutable atoken;
     address public immutable usda;
@@ -26,6 +28,7 @@ contract AuctionVerse is ReentrancyGuard, Errors, AutomationCompatibleInterface 
     AuctionDetails internal auctionDetails;
 
     bool public started;
+    bool public ended;
     uint256 public startTimestamp; //起拍时间
     uint256 public endTimestamp; //结束时间
     uint256 public duration; //持续时间，可以用block.timestamp-
@@ -97,6 +100,7 @@ contract AuctionVerse is ReentrancyGuard, Errors, AutomationCompatibleInterface 
         }
 
         require(amount > 0, "Bid amount must be greater than 0");
+        //检查出价者余额是否足够
         require(
             IUSDA(usda).balanceOf(msg.sender) >= amount,
             "Insufficient balance"
@@ -116,6 +120,11 @@ contract AuctionVerse is ReentrancyGuard, Errors, AutomationCompatibleInterface 
             bidders.push(msg.sender);
         }
 
+        //增加持续时间
+        if (block.timestamp + auctionDetails.incrementDuration > endTimestamp) {
+            endTimestamp = block.timestamp + auctionDetails.incrementDuration;
+        }
+
         // 更新竞拍者出价
         bids[msg.sender] = amount;
         // 更新最高竞标和竞标者
@@ -125,11 +134,14 @@ contract AuctionVerse is ReentrancyGuard, Errors, AutomationCompatibleInterface 
         emit Bid(msg.sender, amount);
     }
 
+    //结束拍卖
+    //最高竞价者把usda转给拍卖合约，拍卖合约把token转给最高竞价者，清空所有竞价者和出价
     function endAuction() external nonReentrant {
         if (!started) revert AuctionVerse_NoAuctionsInProgress();
         if (block.timestamp < endTimestamp) revert AuctionVerse_TooEarlyToEnd();
 
         started = false;
+        ended = true;
 
         require(highestBidder != address(0), "Highest bidder not found");
         require(highestBidder != seller, "Seller cannot be the highest bidder");
@@ -141,7 +153,6 @@ contract AuctionVerse is ReentrancyGuard, Errors, AutomationCompatibleInterface 
             "Insufficient token balance in contract"
         );
 
-        IUSDA(usda).approve(address(this), highestBid);
         // 把最高出价者的usda token转移给卖家
         require(
             IUSDA(usda).transfer(seller, highestBid),
@@ -168,6 +179,36 @@ contract AuctionVerse is ReentrancyGuard, Errors, AutomationCompatibleInterface 
             delete bids[bidders[i]];
         }
         delete bidders;
+    }
+
+    // 新增流拍函数
+    function failAuction() external nonReentrant {
+        if (!started) revert AuctionVerse_NoAuctionsInProgress();
+
+        if (block.timestamp < endTimestamp) revert AuctionVerse_TooEarlyToEnd();
+
+        // 检查是否达到保留价
+        if (highestBid < auctionDetails.reservePrice) {
+            started = false;
+
+            // 将拍卖的token退还给卖家
+            IERC1155(atoken).safeTransferFrom(
+                address(this),
+                seller,
+                auctionDetails.tokenId,
+                auctionDetails.amount,
+                ""
+            );
+
+            emit AuctionFailed(auctionDetails.tokenId, auctionDetails.amount);
+
+            for (uint i = 0; i < bidders.length; i++) {
+                delete bids[bidders[i]];
+            }
+            delete bidders;
+        } else {
+            revert AuctionVerse_ReservePriceMet();
+        }
     }
 
     function onERC1155Received(
@@ -215,43 +256,28 @@ contract AuctionVerse is ReentrancyGuard, Errors, AutomationCompatibleInterface 
         return seller;
     }
 
-    // 新增流拍函数
-    function failAuction() external nonReentrant {
-        if (!started) revert AuctionVerse_NoAuctionsInProgress();
-        if (block.timestamp < endTimestamp) revert AuctionVerse_TooEarlyToEnd();
+    // // Chainlink Keepers 需要实现的接口
+    // function checkUpkeep(
+    //     bytes calldata /*checkData*/
+    // )
+    //     external
+    //     view
+    //     override
+    //     returns (bool upkeepNeeded, bytes memory /*performData*/)
+    // {
+    //     upkeepNeeded =
+    //         started &&
+    //         block.timestamp >= endTimestamp &&
+    //         highestBid < auctionDetails.reservePrice;
+    // }
 
-        // 检查是否达到保留价
-        if (highestBid < auctionDetails.reservePrice) {
-            started = false;
-
-            // 将拍卖的token退还给卖家
-            IERC1155(atoken).safeTransferFrom(
-                address(this),
-                seller,
-                auctionDetails.tokenId,
-                auctionDetails.amount,
-                ""
-            );
-
-            emit AuctionFailed(auctionDetails.tokenId, auctionDetails.amount);
-
-            for (uint i = 0; i < bidders.length; i++) {
-                delete bids[bidders[i]];
-            }
-            delete bidders;
-        } else {
-            revert AuctionVerse_ReservePriceMet();
-        }
-    }
-
-    // Chainlink Keepers 需要实现的接口
-    function checkUpkeep(bytes calldata /*checkData*/) external view override returns (bool upkeepNeeded, bytes memory /*performData*/) {
-        upkeepNeeded = started && block.timestamp >= endTimestamp && highestBid < auctionDetails.reservePrice;
-    }
-
-    function performUpkeep(bytes calldata /*performData*/) external override {
-        if (started && block.timestamp >= endTimestamp && highestBid < auctionDetails.reservePrice) {
-            failAuction();
-        }
-    }
+    // function performUpkeep(bytes calldata /*performData*/) external override {
+    //     if (
+    //         started &&
+    //         block.timestamp >= endTimestamp &&
+    //         highestBid < auctionDetails.reservePrice
+    //     ) {
+    //         failAuction();
+    //     }
+    // }
 }

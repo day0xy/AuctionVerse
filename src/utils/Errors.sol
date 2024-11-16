@@ -16,4 +16,5 @@ contract Errors {
     error FailedToWithdrawBid(address bidder, uint256 amount);
     error NothingToWithdraw();
     error FailedToSendEth(address recipient, uint256 amount);
+    error AuctionVerse_ReservePriceMet();
 }
