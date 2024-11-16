@@ -7,10 +7,12 @@ import {IERC1155Receiver, IERC165} from "@openzeppelin/contracts/token/ERC1155/I
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {Errors} from "./utils/Errors.sol";
+import {IUSDA} from "./interfaces/IUSDA.sol";
 
 contract AuctionVerse is ReentrancyGuard, Errors {
-    address internal immutable seller;
-    address internal immutable atoken;
+    address public immutable seller;
+    address public immutable atoken;
+    address public immutable usda;
 
     struct AuctionDetails {
         uint256 tokenId; //拍卖的tokenId
@@ -19,13 +21,12 @@ contract AuctionVerse is ReentrancyGuard, Errors {
         uint256 Increment; //最小加价幅度
         uint256 incrementDuration; //加价幅度持续时间
         uint256 reservePrice; //保留价，如果最高价格没有达到保留价，卖家可以选择不卖
-        uint256 tokenIdOnAuction;
         uint256 fractionalizedAmountOnAuction;
     }
 
     bool started;
     uint256 startTimestamp; //起拍时间
-    uint48 endTimestamp; //结束时间
+    uint256 endTimestamp; //结束时间
     uint256 duration; //持续时间，可以用block.timestamp-
     uint256 highestBid; //最高出价
     address highestBidder; //最高出价者
@@ -33,7 +34,8 @@ contract AuctionVerse is ReentrancyGuard, Errors {
 
     AuctionDetails internal auctionDetails;
 
-    mapping(address bidder => uint256 totalBiddedEth) internal bids;
+    //记录当前拍卖合约里，竞价者的出价映射
+    mapping(address bidder => uint256 totalBiddedAmount) public bids;
 
     event AuctionStarted(
         uint256 indexed tokenId,
@@ -62,7 +64,7 @@ contract AuctionVerse is ReentrancyGuard, Errors {
         if (started) revert AuctionVerse_AuctionAlreadyStarted();
         if (msg.sender != seller) revert AuctionVerse_OnlySellerCanCall();
 
-        //将拍卖的token从卖家转移到拍卖合约
+        //将铸造的新的Atoken从卖家转移到拍卖合约地址
         IERC1155(atoken).safeTransferFrom(
             seller,
             address(this),
@@ -72,7 +74,10 @@ contract AuctionVerse is ReentrancyGuard, Errors {
         );
 
         started = true;
-        endTimestamp = SafeCast.toUint48(block.timestamp + 7 days);
+        startTimestamp = block.timestamp;
+        endTimestamp = block.timestamp + 7 days;
+        highestBid = auctionDetails.startedBid;
+        highestBidder = msg.sender;
 
         emit AuctionStarted(
             auctionDetails.tokenId,
@@ -81,18 +86,28 @@ contract AuctionVerse is ReentrancyGuard, Errors {
         );
     }
 
-
-    function bid() external payable nonReentrant {
+    function bid(uint256 amount) external nonReentrant {
         if (!started) revert AuctionVerse_NoAuctionsInProgress();
         if (block.timestamp >= endTimestamp) revert AuctionVerse_AuctionEnded();
-        if (msg.value <= highestBid) revert AuctionVerse_BidNotHighEnough();
 
+        // 检查竞标金额是否大于当前最高竞标
+        if (amount <= highestBid) revert AuctionVerse_BidTooLow();
+
+        // 将USDA从竞标者转移到拍卖合约
+        bool success = IUSDA(usda).transferFrom(msg.sender, address(this), amount);
+        if (!success) revert AuctionVerse_TransferFailed();
+
+        bids[msg.sender] += amount;
+
+        // 更新最高竞标和竞标者
+        highestBid = amount;
         highestBidder = msg.sender;
-        highestBid = msg.value;
-        bids[msg.sender] += msg.value;
 
-        emit Bid(msg.sender, msg.value);
+        emit Bid(msg.sender, amount);
     }
+
+
+   
 
     function withdrawBid() external nonReentrant {
         if (msg.sender == highestBidder)

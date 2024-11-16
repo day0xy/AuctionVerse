@@ -7,7 +7,8 @@ contract Errors {
     error OnlyRealEstateTokenSupported();
     error AuctionVerse_NoAuctionsInProgress();
     error AuctionVerse_AuctionEnded();
-    error AuctionVerse_BidNotHighEnough();
+    error AuctionVerse_BidTooLow();
+    error AuctionVerse_TransferFailed();
     error AuctionVerse_CannotWithdrawHighestBid();
     error AuctionVerse_TooEarlyToEnd();
     error FailedToWithdrawBid(address bidder, uint256 amount);
