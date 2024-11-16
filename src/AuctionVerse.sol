@@ -8,8 +8,9 @@ import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {Errors} from "./utils/Errors.sol";
 import {IUSDA} from "./interfaces/IUSDA.sol";
+import {AutomationCompatibleInterface} from "@chainlink/contracts/src/v0.8/interfaces/AutomationCompatibleInterface.sol";
 
-contract AuctionVerse is ReentrancyGuard, Errors {
+contract AuctionVerse is ReentrancyGuard, Errors, AutomationCompatibleInterface {
     address public immutable seller;
     address public immutable atoken;
     address public immutable usda;
@@ -22,6 +23,7 @@ contract AuctionVerse is ReentrancyGuard, Errors {
         uint256 incrementDuration; //加价幅度持续时间
         uint256 reservePrice; //保留价，如果最高价格没有达到保留价，卖家可以选择不卖
     }
+    AuctionDetails internal auctionDetails;
 
     bool public started;
     uint256 public startTimestamp; //起拍时间
@@ -29,13 +31,12 @@ contract AuctionVerse is ReentrancyGuard, Errors {
     uint256 public duration; //持续时间，可以用block.timestamp-
     uint256 public highestBid; //最高出价
     address public highestBidder; //最高出价者
-    uint256 public bidDeposit; //起拍价押金为起拍价的3%
-
-    AuctionDetails internal auctionDetails;
+    uint256 public bidDeposit = (auctionDetails.startedBid * 3) / 100; //起拍价押金为起拍价的3%
 
     //某个人当前的出价
     mapping(address bidder => uint256 latestBiddedAmount) public bids;
     //记录竞拍者
+    mapping(address bidder => bool isDeposit) public isDeposit;
     address[] public bidders;
 
     event AuctionStarted(
@@ -51,6 +52,8 @@ contract AuctionVerse is ReentrancyGuard, Errors {
         address indexed winner,
         uint256 indexed winningBid
     );
+
+    event AuctionFailed(uint256 indexed tokenId, uint256 amount);
 
     constructor(address atokenAddress, AuctionDetails memory auctionDetail) {
         seller = msg.sender;
@@ -86,8 +89,13 @@ contract AuctionVerse is ReentrancyGuard, Errors {
     }
 
     //用USDA出价
-    //前端这里要限制amount出价的幅度，并且做余额检查
+    //前端这里同样要限制amount出价的幅度，并且做余额检查
     function bid(uint256 amount) external nonReentrant {
+        //如果出价者没有交押金，则交押金
+        if (isDeposit[msg.sender] == false) {
+            stake();
+        }
+
         require(amount > 0, "Bid amount must be greater than 0");
         require(
             IUSDA(usda).balanceOf(msg.sender) >= amount,
@@ -133,9 +141,12 @@ contract AuctionVerse is ReentrancyGuard, Errors {
             "Insufficient token balance in contract"
         );
 
+        IUSDA(usda).approve(address(this), highestBid);
         // 把最高出价者的usda token转移给卖家
-        bool success = IUSDA(usda).transfer(seller, highestBid);
-        if (!success) revert AuctionVerse_TransferFailed();
+        require(
+            IUSDA(usda).transfer(seller, highestBid),
+            "USDA transfer failed"
+        );
 
         // 将拍卖的token转移给最高出价者
         IERC1155(atoken).safeTransferFrom(
@@ -146,31 +157,17 @@ contract AuctionVerse is ReentrancyGuard, Errors {
             ""
         );
 
-        // 将最高出价转移给卖家
-        success = IUSDA(usda).transfer(seller, highestBid);
-        if (!success) revert AuctionVerse_TransferFailed();
-
         emit AuctionEnded(
             auctionDetails.tokenId,
             auctionDetails.amount,
             highestBidder,
             highestBid
         );
-    }
 
-    function withdrawBid() external nonReentrant {
-        if (started) revert AuctionVerse_AuctionInProgress();
-        require(block.timestamp > endTimestamp, "Auction not ended yet");
-        if (msg.sender == highestBidder)
-            revert AuctionVerse_CannotWithdrawHighestBid();
-
-        uint256 amount = bids[msg.sender];
-        if (amount == 0) revert NothingToWithdraw();
-        delete bids[msg.sender];
-
-        // 退还出价金额
-        bool success = IUSDA(usda).transfer(msg.sender, amount);
-        if (!success) revert AuctionVerse_TransferFailed();
+        for (uint i = 0; i < bidders.length; i++) {
+            delete bids[bidders[i]];
+        }
+        delete bidders;
     }
 
     function onERC1155Received(
@@ -181,7 +178,7 @@ contract AuctionVerse is ReentrancyGuard, Errors {
         bytes calldata /*data*/
     ) external view returns (bytes4) {
         if (msg.sender != address(atoken)) {
-            revert OnlyRealEstateTokenSupported();
+            revert OnlyATokenSupported();
         }
 
         return IERC1155Receiver.onERC1155Received.selector;
@@ -195,23 +192,66 @@ contract AuctionVerse is ReentrancyGuard, Errors {
         bytes calldata /*data*/
     ) external view returns (bytes4) {
         if (msg.sender != address(atoken)) {
-            revert OnlyRealEstateTokenSupported();
+            revert OnlyATokenSupported();
         }
 
         return IERC1155Receiver.onERC1155BatchReceived.selector;
     }
 
-    function supportsInterface(
-        bytes4 interfaceId
-    ) public view virtual override(IERC165) returns (bool) {
-        return
-            interfaceId == type(IERC1155Receiver).interfaceId ||
-            interfaceId == type(IERC165).interfaceId;
-    }
+    //approve由前端进行
+    function stake() internal {
+        require(isDeposit[msg.sender] == false, "Already staked");
 
-    function stake() internal {}
+        // 从出价者账户转移USDA到合约,锁定起来
+        require(
+            IUSDA(usda).transferFrom(msg.sender, address(this), bidDeposit),
+            "USDA transfer failed"
+        );
+
+        isDeposit[msg.sender] = true;
+    }
 
     function getSeller() external view returns (address) {
         return seller;
+    }
+
+    // 新增流拍函数
+    function failAuction() external nonReentrant {
+        if (!started) revert AuctionVerse_NoAuctionsInProgress();
+        if (block.timestamp < endTimestamp) revert AuctionVerse_TooEarlyToEnd();
+
+        // 检查是否达到保留价
+        if (highestBid < auctionDetails.reservePrice) {
+            started = false;
+
+            // 将拍卖的token退还给卖家
+            IERC1155(atoken).safeTransferFrom(
+                address(this),
+                seller,
+                auctionDetails.tokenId,
+                auctionDetails.amount,
+                ""
+            );
+
+            emit AuctionFailed(auctionDetails.tokenId, auctionDetails.amount);
+
+            for (uint i = 0; i < bidders.length; i++) {
+                delete bids[bidders[i]];
+            }
+            delete bidders;
+        } else {
+            revert AuctionVerse_ReservePriceMet();
+        }
+    }
+
+    // Chainlink Keepers 需要实现的接口
+    function checkUpkeep(bytes calldata /*checkData*/) external view override returns (bool upkeepNeeded, bytes memory /*performData*/) {
+        upkeepNeeded = started && block.timestamp >= endTimestamp && highestBid < auctionDetails.reservePrice;
+    }
+
+    function performUpkeep(bytes calldata /*performData*/) external override {
+        if (started && block.timestamp >= endTimestamp && highestBid < auctionDetails.reservePrice) {
+            failAuction();
+        }
     }
 }

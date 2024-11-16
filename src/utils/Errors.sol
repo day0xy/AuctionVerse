@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 contract Errors {
     error AuctionVerse_OnlySellerCanCall();
     error AuctionVerse_AuctionAlreadyStarted();
-    error OnlyRealEstateTokenSupported();
+    error OnlyATokenSupported();
     error AuctionVerse_NoAuctionsInProgress();
     error AuctionVerse_AuctionInProgress();
     error AuctionVerse_AuctionEnded();
