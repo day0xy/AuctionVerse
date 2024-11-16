@@ -21,26 +21,25 @@ contract AuctionVerse is ReentrancyGuard, Errors {
         uint256 Increment; //最小加价幅度
         uint256 incrementDuration; //加价幅度持续时间
         uint256 reservePrice; //保留价，如果最高价格没有达到保留价，卖家可以选择不卖
-        uint256 fractionalizedAmountOnAuction;
     }
 
-    bool started;
-    uint256 startTimestamp; //起拍时间
-    uint256 endTimestamp; //结束时间
-    uint256 duration; //持续时间，可以用block.timestamp-
-    uint256 highestBid; //最高出价
-    address highestBidder; //最高出价者
-    uint256 bidDeposit; //起拍价押金为起拍价的3%
+    bool public started;
+    uint256 public startTimestamp; //起拍时间
+    uint256 public endTimestamp; //结束时间
+    uint256 public duration; //持续时间，可以用block.timestamp-
+    uint256 public highestBid; //最高出价
+    address public highestBidder; //最高出价者
+    uint256 public bidDeposit; //起拍价押金为起拍价的3%
 
     AuctionDetails internal auctionDetails;
 
-    //记录当前拍卖合约里，竞价者的出价映射
-    mapping(address bidder => uint256 totalBiddedAmount) public bids;
+    //某个人当前的出价
+    mapping(address bidder => uint256 lastestBiddedAmount) public bids;
 
     event AuctionStarted(
         uint256 indexed tokenId,
         uint256 indexed amount,
-        uint48 indexed endTimestamp
+        uint256 indexed endTimestamp
     );
 
     event Bid(address indexed bidder, uint256 indexed amount);
@@ -94,7 +93,7 @@ contract AuctionVerse is ReentrancyGuard, Errors {
         // 检查竞标金额是否满足最小加价幅度
         if (amount < highestBid + auctionDetails.Increment)
             revert AuctionVerse_BidIncrementTooLow();
-
+        
         // 将USDA从竞标者转移到拍卖合约
         bool success = IUSDA(usda).transferFrom(
             msg.sender,
@@ -118,27 +117,31 @@ contract AuctionVerse is ReentrancyGuard, Errors {
 
         started = false;
 
+        require(highestBidder != address(0), "Highest bidder not found");
+        require(highestBidder != seller, "Seller cannot be the highest bidder");
         // 将拍卖的token转移给最高出价者
         IERC1155(atoken).safeTransferFrom(
             address(this),
             highestBidder,
             auctionDetails.tokenId,
-            auctionDetails.fractionalizedAmountOnAuction,
+            auctionDetails.amount,
             ""
         );
 
         // 将最高出价转移给卖家
-        (bool sent, ) = seller.call{value: highestBid}("");
-        if (!sent) revert FailedToSendEth(seller, highestBid);
+        IUSDA(usda).transferFrom(address(this), msg.sender, amount);
 
         emit AuctionEnded(
             auctionDetails.tokenId,
-            auctionDetails.fractionalizedAmountOnAuction,
+            auctionDetails.amount,
             highestBidder,
             highestBid
         );
     }
+
     function withdrawBid() external nonReentrant {
+        if (started) revert AuctionVerse_AuctionInProgress();
+        require(block.timestamp > endTimestamp, "Auction not ended yet");
         if (msg.sender == highestBidder)
             revert AuctionVerse_CannotWithdrawHighestBid();
 
@@ -146,10 +149,11 @@ contract AuctionVerse is ReentrancyGuard, Errors {
         if (amount == 0) revert NothingToWithdraw();
         delete bids[msg.sender];
 
-        (bool sent, ) = msg.sender.call{value: amount}("");
-
-        if (!sent) revert FailedToWithdrawBid(msg.sender, amount);
+        // 退还出价金额
+        bool success = IUSDA(usda).transfer(msg.sender, amount);
+        if (!success) revert AuctionVerse_TransferFailed();
     }
+
     function onERC1155Received(
         address /*operator*/,
         address /*from*/,

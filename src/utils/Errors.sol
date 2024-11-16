@@ -6,6 +6,7 @@ contract Errors {
     error AuctionVerse_AuctionAlreadyStarted();
     error OnlyRealEstateTokenSupported();
     error AuctionVerse_NoAuctionsInProgress();
+    error AuctionVerse_AuctionInProgress();
     error AuctionVerse_AuctionEnded();
     error AuctionVerse_BidTooLow();
     error AuctionVerse_BidIncrementTooLow();
