@@ -16,7 +16,7 @@ contract AuctionVerse is ReentrancyGuard, Errors {
 
     struct AuctionDetails {
         uint256 tokenId; //拍卖的tokenId
-        uint256 amount; //拍卖的token数量   
+        uint256 amount; //拍卖的token数量
         uint256 startedBid; //起拍价
         uint256 Increment; //最小加价幅度
         uint256 incrementDuration; //加价幅度持续时间
@@ -58,9 +58,7 @@ contract AuctionVerse is ReentrancyGuard, Errors {
     }
 
     //开始拍卖合约
-    function startAuction(
-        bytes calldata data
-    ) external nonReentrant {
+    function startAuction(bytes calldata data) external nonReentrant {
         if (started) revert AuctionVerse_AuctionAlreadyStarted();
         if (msg.sender != seller) revert AuctionVerse_OnlySellerCanCall();
 
@@ -93,11 +91,19 @@ contract AuctionVerse is ReentrancyGuard, Errors {
         // 检查竞标金额是否大于当前最高竞标
         if (amount <= highestBid) revert AuctionVerse_BidTooLow();
 
+        // 检查竞标金额是否满足最小加价幅度
+        if (amount < highestBid + auctionDetails.Increment)
+            revert AuctionVerse_BidIncrementTooLow();
+
         // 将USDA从竞标者转移到拍卖合约
-        bool success = IUSDA(usda).transferFrom(msg.sender, address(this), amount);
+        bool success = IUSDA(usda).transferFrom(
+            msg.sender,
+            address(this),
+            amount
+        );
         if (!success) revert AuctionVerse_TransferFailed();
 
-        bids[msg.sender] += amount;
+        bids[msg.sender] = amount;
 
         // 更新最高竞标和竞标者
         highestBid = amount;
@@ -106,9 +112,32 @@ contract AuctionVerse is ReentrancyGuard, Errors {
         emit Bid(msg.sender, amount);
     }
 
+    function endAuction() external nonReentrant {
+        if (!started) revert AuctionVerse_NoAuctionsInProgress();
+        if (block.timestamp < endTimestamp) revert AuctionVerse_TooEarlyToEnd();
 
-   
+        started = false;
 
+        // 将拍卖的token转移给最高出价者
+        IERC1155(atoken).safeTransferFrom(
+            address(this),
+            highestBidder,
+            auctionDetails.tokenId,
+            auctionDetails.fractionalizedAmountOnAuction,
+            ""
+        );
+
+        // 将最高出价转移给卖家
+        (bool sent, ) = seller.call{value: highestBid}("");
+        if (!sent) revert FailedToSendEth(seller, highestBid);
+
+        emit AuctionEnded(
+            auctionDetails.tokenId,
+            auctionDetails.fractionalizedAmountOnAuction,
+            highestBidder,
+            highestBid
+        );
+    }
     function withdrawBid() external nonReentrant {
         if (msg.sender == highestBidder)
             revert AuctionVerse_CannotWithdrawHighestBid();
@@ -121,32 +150,6 @@ contract AuctionVerse is ReentrancyGuard, Errors {
 
         if (!sent) revert FailedToWithdrawBid(msg.sender, amount);
     }
-
-    function endAuction() external nonReentrant {
-        if (!started) revert AuctionVerse_NoAuctionsInProgress();
-        if (block.timestamp < endTimestamp) revert AuctionVerse_TooEarlyToEnd();
-
-        started = false;
-
-        IERC1155(atoken).safeTransferFrom(
-            address(this),
-            highestBidder,
-            tokenIdOnAuction,
-            fractionalizedAmountOnAuction,
-            ""
-        );
-
-        (bool sent, ) = seller.call{value: highestBid}("");
-        if (!sent) revert FailedToSendEth(seller, highestBid);
-
-        emit AuctionEnded(
-            tokenIdOnAuction,
-            fractionalizedAmountOnAuction,
-            highestBidder,
-            highestBid
-        );
-    }
-
     function onERC1155Received(
         address /*operator*/,
         address /*from*/,
@@ -182,7 +185,6 @@ contract AuctionVerse is ReentrancyGuard, Errors {
             interfaceId == type(IERC1155Receiver).interfaceId ||
             interfaceId == type(IERC165).interfaceId;
     }
-
 
     function getSeller() external view returns (address) {
         return seller;

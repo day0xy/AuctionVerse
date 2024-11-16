@@ -8,6 +8,7 @@ contract Errors {
     error AuctionVerse_NoAuctionsInProgress();
     error AuctionVerse_AuctionEnded();
     error AuctionVerse_BidTooLow();
+    error AuctionVerse_BidIncrementTooLow();
     error AuctionVerse_TransferFailed();
     error AuctionVerse_CannotWithdrawHighestBid();
     error AuctionVerse_TooEarlyToEnd();
